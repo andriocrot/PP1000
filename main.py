@@ -766,3 +766,99 @@ def range_matrix_raise_btn() -> Dict[str, float]:
             out[key] = min(100.0, max(0.0, pct))
     return out
 
+
+def range_matrix_fold_utg() -> Dict[str, float]:
+    """Fold % from UTG; higher = fold more."""
+    out = {}
+    for r1 in range(13):
+        for r2 in range(13):
+            if r1 < r2:
+                r1, r2 = r2, r1
+            ra = PP1000Constants.RANK_NAMES[r1]
+            rb = PP1000Constants.RANK_NAMES[r2]
+            suited = "s" if r1 != r2 else ""
+            key = ra + rb + suited
+            if r1 == r2 and r1 >= 10:
+                pct = 5.0
+            elif r1 >= 11 and r2 >= 10:
+                pct = 10.0
+            elif r1 >= 9:
+                pct = 35.0 - r1 * 2
+            else:
+                pct = 80.0 - r1 * 3 + r2
+            out[key] = min(100.0, max(0.0, pct))
+    return out
+
+
+def get_hand_key(c1: Card, c2: Card) -> str:
+    r1, r2 = int(c1.rank), int(c2.rank)
+    if r1 < r2:
+        r1, r2 = r2, r1
+    ra = PP1000Constants.RANK_NAMES[r1]
+    rb = PP1000Constants.RANK_NAMES[r2]
+    suited = "s" if c1.suit == c2.suit and r1 != r2 else "o"
+    return ra + rb + suited
+
+
+# -----------------------------------------------------------------------------
+# Pot odds and implied odds (simplified)
+# -----------------------------------------------------------------------------
+
+def pot_odds(call_amount: float, pot_after_call: float) -> float:
+    if pot_after_call <= 0:
+        return 0.0
+    return call_amount / pot_after_call
+
+
+def break_even_equity(call_amount: float, pot_before_call: float) -> float:
+    total = pot_before_call + call_amount
+    if total <= 0:
+        return 0.0
+    return call_amount / total
+
+
+def suggested_action_by_equity(equity: float, be: float, margin: float = 0.05) -> str:
+    if equity >= be + margin:
+        return "call"
+    if equity <= be - margin:
+        return "fold"
+    return "marginal"
+
+
+# -----------------------------------------------------------------------------
+# Level and progress system
+# -----------------------------------------------------------------------------
+
+def compute_level(hands_played: int, ai_agreement_count: int) -> int:
+    if hands_played == 0:
+        return 0
+    rate = ai_agreement_count / hands_played
+    base = min(PP1000Constants.TRAINING_LEVELS - 1, hands_played // 50)
+    bonus = int(rate * 5)
+    return min(PP1000Constants.TRAINING_LEVELS - 1, base + bonus)
+
+
+def level_title(level: int) -> str:
+    titles = [
+        "Rookie", "Beginner", "Learner", "Improving", "Developing",
+        "Intermediate", "Solid", "Advanced", "Strong", "Expert",
+        "Sharp", "Pro", "Elite", "Master", "Champion",
+        "Legend", "Hall of Fame", "All-Star", "PokerPro", "AI Pro"
+    ]
+    return titles[min(level, len(titles) - 1)]
+
+
+# -----------------------------------------------------------------------------
+# Export / import
+# -----------------------------------------------------------------------------
+
+def export_sessions_csv(path: Optional[str] = None) -> None:
+    path = path or str(_ensure_config_dir() / "sessions_export.csv")
+    sessions = load_sessions()
+    lines = ["session_id,stakes_tier,opened_at,closed_at,hand_count,level"]
+    for s in sessions:
+        hands = s.get("hands", [])
+        level = compute_level(len(hands), sum(1 for h in hands if h.get("action_taken") == h.get("ai_suggestion")))
+        lines.append(",".join([
+            s.get("session_id", ""),
+            str(s.get("stakes_tier", 0)),
