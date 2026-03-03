@@ -286,3 +286,99 @@ class HandRecord:
     timestamp: float
 
 
+@dataclass
+class TrainingSession:
+    session_id: str
+    stakes_tier: int
+    opened_at: float
+    closed_at: Optional[float]
+    hands: List[HandRecord]
+    level_unlocked: int
+
+
+def _ensure_config_dir() -> Path:
+    path = Path.home() / PP1000Constants.CONFIG_DIR
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _sessions_path() -> Path:
+    return _ensure_config_dir() / PP1000Constants.SESSIONS_FILE
+
+
+def _history_path() -> Path:
+    return _ensure_config_dir() / PP1000Constants.HISTORY_FILE
+
+
+def load_sessions() -> List[Dict[str, Any]]:
+    p = _sessions_path()
+    if not p.exists():
+        return []
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_sessions(sessions: List[Dict[str, Any]]) -> None:
+    _sessions_path().parent.mkdir(parents=True, exist_ok=True)
+    with open(_sessions_path(), "w", encoding="utf-8") as f:
+        json.dump(sessions, f, indent=2)
+
+
+def load_history() -> List[Dict[str, Any]]:
+    p = _history_path()
+    if not p.exists():
+        return []
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_history(history: List[Dict[str, Any]]) -> None:
+    _history_path().parent.mkdir(parents=True, exist_ok=True)
+    with open(_history_path(), "w", encoding="utf-8") as f:
+        json.dump(history, f, indent=2)
+
+
+# -----------------------------------------------------------------------------
+# PokerPro contract hashes (for optional on-chain anchoring)
+# -----------------------------------------------------------------------------
+
+def _keccak256(data: bytes) -> bytes:
+    try:
+        from Crypto.Hash import keccak
+        k = keccak.new(digest_bits=256)
+        k.update(data)
+        return k.digest()
+    except Exception:
+        try:
+            import sha3
+            return sha3.keccak_256(data).digest()
+        except Exception:
+            return hashlib.sha3_256(data).digest()
+
+
+def hand_hash_for_contract(hole: List[str], board: List[str], session_salt: str) -> str:
+    payload = f"{session_salt}:{','.join(hole)}:{','.join(board)}"
+    h = _keccak256(payload.encode("utf-8"))
+    return "0x" + h.hex()
+
+
+def feedback_hash_for_contract(hand_id: str, quality_band: int, suggestion: str) -> str:
+    payload = f"{hand_id}:{quality_band}:{suggestion}"
+    h = _keccak256(payload.encode("utf-8"))
+    return "0x" + h.hex()
+
+
+# -----------------------------------------------------------------------------
+# CLI menus and flows
+# -----------------------------------------------------------------------------
+
+def print_banner() -> None:
+    print("\n" + "=" * 60)
+    print("  PP1000 — AI Poker Training. AI that makes you pro.")
+    print("  Version:", PP1000Constants.VERSION)
