@@ -1054,3 +1054,99 @@ HELP_TOPICS = {
     "postflop": "Postflop: Value bet when you have a strong hand. Check when marginal. Consider pot odds before calling.",
     "position": "Position: Later position = more hands to play. BTN is most profitable. Play fewer hands from SB/BB without premium.",
     "equity": "Equity: Your share of the pot when all-in. Use break-even equity (call / (pot + call)) to decide calls.",
+    "ranges": "Ranges: Think in ranges, not single hands. Tighten vs raises, loosen when you have position.",
+    "bluff": "Bluffing: Bluff more on dry boards and when you have position. Balance value and bluff for GTO.",
+    "drills": "Drills: Use preflop and postflop drills to build muscle memory. Range quiz improves hand reading.",
+}
+
+
+def show_help(topic: Optional[str] = None) -> None:
+    if topic:
+        print(HELP_TOPICS.get(topic.lower(), "Unknown topic. Try: preflop, postflop, position, equity, ranges, bluff, drills"))
+    else:
+        print("Available help topics:", ", ".join(HELP_TOPICS.keys()))
+        t = input("Topic: ").strip()
+        show_help(t or None)
+
+
+# -----------------------------------------------------------------------------
+# Range display (text grid)
+# -----------------------------------------------------------------------------
+
+def range_grid_compact(hand_keys: List[str]) -> str:
+    """Compact grid of which hands are in range; 13x13 with suited/off suited."""
+    grid = [["." for _ in range(13)] for _ in range(13)]
+    for key in hand_keys:
+        if len(key) >= 2:
+            r1 = PP1000Constants.RANK_NAMES.index(key[0]) if key[0] in PP1000Constants.RANK_NAMES else -1
+            r2 = PP1000Constants.RANK_NAMES.index(key[1]) if len(key) > 1 and key[1] in PP1000Constants.RANK_NAMES else -1
+            if r1 >= 0 and r2 >= 0:
+                if r1 < r2:
+                    r1, r2 = r2, r1
+                grid[r1][r2] = "s" if "s" in key else "o"
+    lines = ["   " + "".join(PP1000Constants.RANK_NAMES)]
+    for i, row in enumerate(grid):
+        lines.append(PP1000Constants.RANK_NAMES[i] + " " + "".join(row))
+    return "\n".join(lines)
+
+
+# -----------------------------------------------------------------------------
+# Quiz bank for drills
+# -----------------------------------------------------------------------------
+
+QUIZ_PREFLOP = [
+    {"hole": "AA", "position": "utg", "answer": "raise"},
+    {"hole": "72o", "position": "btn", "answer": "fold"},
+    {"hole": "AKs", "position": "co", "answer": "raise"},
+    {"hole": "T9s", "position": "btn", "answer": "call"},
+    {"hole": "33", "position": "utg", "answer": "fold"},
+    {"hole": "KQs", "position": "hj", "answer": "raise"},
+    {"hole": "JTo", "position": "co", "answer": "call"},
+    {"hole": "A2o", "position": "bb", "answer": "fold"},
+    {"hole": "QQ", "position": "utg", "answer": "raise"},
+    {"hole": "98s", "position": "btn", "answer": "call"},
+]
+
+
+def _shorthand_to_cards(sh: str) -> List[Card]:
+    sh = sh.strip().upper()
+    if len(sh) < 2:
+        raise ValueError("Need at least 2 chars")
+    rank_map = {c: Rank(i) for i, c in enumerate(PP1000Constants.RANK_NAMES)}
+    r1 = rank_map.get(sh[0])
+    r2 = rank_map.get(sh[1]) if len(sh) > 1 else r1
+    if r1 is None or r2 is None:
+        raise ValueError("Invalid rank")
+    suited = "s" in sh or (len(sh) == 2 and r1 == r2)
+    if suited or r1 == r2:
+        return [Card(r1, Suit.CLUBS), Card(r2, Suit.DIAMONDS if r1 != r2 else Suit.HEARTS)]
+    return [Card(r1, Suit.CLUBS), Card(r2, Suit.SPADES)]
+
+
+def run_quiz_bank(engine: AITrainingEngine) -> None:
+    print("Preflop quiz: 10 questions. Enter raise/call/fold.")
+    score = 0
+    for i, q in enumerate(QUIZ_PREFLOP):
+        hole_str = q["hole"]
+        try:
+            hole = _shorthand_to_cards(hole_str)
+            c1, c2 = hole[0], hole[1]
+        except Exception:
+            c1, c2 = Card(Rank.ACE, Suit.SPADES), Card(Rank.ACE, Suit.HEARTS)
+        sug = engine.suggest_preflop([c1, c2], q["position"], 5)
+        ans = input("  Q{} {} @ {}: ".format(i + 1, hole_str, q["position"])).strip().lower()
+        if ans and ans[0] == sug.action[0]:
+            score += 1
+            print("    Correct.")
+        else:
+            print("    AI:", sug.action)
+    print("Score:", score, "/", len(QUIZ_PREFLOP))
+
+
+# -----------------------------------------------------------------------------
+# Hand strength tiers (for display)
+# -----------------------------------------------------------------------------
+
+def hand_strength_tier(hole: Sequence[Card], board: Sequence[Card]) -> int:
+    """0–9; 9 = nuts, 0 = trash."""
+    if len(board) < 3:
