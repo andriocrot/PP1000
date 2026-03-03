@@ -1342,3 +1342,99 @@ def export_session_hands_csv(session_id: str, path: Optional[str] = None) -> Non
             return
     print("Session not found.")
 
+
+# -----------------------------------------------------------------------------
+# AI suggestion with explanation (long form)
+# -----------------------------------------------------------------------------
+
+def explain_suggestion(sug: AISuggestion, context: str) -> str:
+    lines = [
+        "Action: " + sug.action,
+        "Confidence: {:.0%}".format(sug.confidence),
+        "Reasoning: " + sug.reasoning,
+    ]
+    if sug.ev_estimate is not None:
+        lines.append("EV estimate: {:.2f}".format(sug.ev_estimate))
+    if sug.alternatives:
+        lines.append("Alternatives: " + ", ".join(sug.alternatives))
+    lines.append("Context: " + context)
+    return "\n".join(lines)
+
+
+# -----------------------------------------------------------------------------
+# Position constants for UI
+# -----------------------------------------------------------------------------
+
+POSITION_ORDER = ["utg", "utg+1", "hj", "co", "btn", "sb", "bb"]
+
+
+def position_index(name: str) -> int:
+    try:
+        return POSITION_ORDER.index(name.lower())
+    except ValueError:
+        return 3
+
+
+# -----------------------------------------------------------------------------
+# Stakes tier labels
+# -----------------------------------------------------------------------------
+
+def stakes_tier_label(tier: int) -> str:
+    labels = [
+        "Micro", "Micro+", "Low", "Low+", "Mid", "Mid+", "High", "High+", "High Stakes", "Top", "Elite"
+    ]
+    return labels[min(max(0, tier), len(labels) - 1)]
+
+
+# -----------------------------------------------------------------------------
+# Session list with pagination
+# -----------------------------------------------------------------------------
+
+def list_sessions_paginated(page: int = 0, page_size: int = 10) -> List[Dict[str, Any]]:
+    sessions = load_sessions()
+    start = page * page_size
+    return sessions[-(start + page_size):-(start) if start else None] if start < len(sessions) else []
+
+
+# -----------------------------------------------------------------------------
+# Hand replay (re-evaluate and show AI again)
+# -----------------------------------------------------------------------------
+
+def replay_hand(hand_record: Dict[str, Any], engine: AITrainingEngine) -> AISuggestion:
+    hole_str = hand_record.get("hole", [])
+    board_str = hand_record.get("board", [])
+    tier = hand_record.get("stakes_tier", 5)
+    if len(hole_str) < 2:
+        return AISuggestion("fold", 0.0, None, "Invalid hand.", [])
+    try:
+        hole = [Card.from_string(hole_str[0]), Card.from_string(hole_str[1])]
+        board = [Card.from_string(b) for b in board_str] if board_str else []
+        if board:
+            return engine.suggest_postflop(hole, board, 0.3)
+        return engine.suggest_preflop(hole, "btn", tier)
+    except ValueError:
+        return AISuggestion("fold", 0.0, None, "Invalid cards.", [])
+
+
+# -----------------------------------------------------------------------------
+# Quality band distribution (for stats)
+# -----------------------------------------------------------------------------
+
+def quality_band_distribution(sessions: List[Dict[str, Any]]) -> Dict[int, int]:
+    dist: Dict[int, int] = {}
+    for s in sessions:
+        for h in s.get("hands", []):
+            b = h.get("quality_band", 0)
+            dist[b] = dist.get(b, 0) + 1
+    return dist
+
+
+# -----------------------------------------------------------------------------
+# Daily goal tracking (placeholder)
+# -----------------------------------------------------------------------------
+
+def daily_goal_hands() -> int:
+    return 50
+
+
+def daily_goal_progress() -> Tuple[int, int]:
