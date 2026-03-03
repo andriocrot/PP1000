@@ -190,3 +190,99 @@ def evaluate_hand(cards: Sequence[Card]) -> Tuple[int, List[int]]:
     if rank_cnt[0][0] == 2 and len(rank_cnt) >= 2 and rank_cnt[1][0] == 2:
         k = [rank_cnt[0][1], rank_cnt[1][1]]
         kickers = sorted([r for r in ranks if r not in k], reverse=True)[:1]
+        return (3, sorted(k, reverse=True) + kickers)
+    if rank_cnt[0][0] == 2:
+        kickers = sorted([r for r in ranks if r != rank_cnt[0][1]], reverse=True)[:3]
+        return (2, [rank_cnt[0][1]] + kickers)
+    return (1, sorted(ranks, reverse=True)[:5])
+
+
+def compare_hands(h1: Sequence[Card], h2: Sequence[Card]) -> int:
+    e1 = evaluate_hand(h1)
+    e2 = evaluate_hand(h2)
+    if e1[0] != e2[0]:
+        return 1 if e1[0] > e2[0] else -1
+    for a, b in zip(e1[1], e2[1]):
+        if a != b:
+            return 1 if a > b else -1
+    return 0
+
+
+def hand_rank_name(hand_type: int) -> str:
+    if 1 <= hand_type <= len(PP1000Constants.HAND_RANK_NAMES):
+        return PP1000Constants.HAND_RANK_NAMES[hand_type - 1]
+    return "Unknown"
+
+
+# -----------------------------------------------------------------------------
+# AI training engine: ranges and suggestions
+# -----------------------------------------------------------------------------
+
+@dataclass
+class AISuggestion:
+    action: str
+    confidence: float
+    ev_estimate: Optional[float]
+    reasoning: str
+    alternatives: List[str]
+
+
+class AITrainingEngine:
+    def __init__(self, seed: Optional[int] = None):
+        self._rng = random.Random(seed)
+        self._range_tight = 0.22
+        self._range_loose = 0.38
+
+    def suggest_preflop(self, hole: Sequence[Card], position: str, stakes_tier: int) -> AISuggestion:
+        r1, r2 = int(hole[0].rank), int(hole[1].rank)
+        suited = hole[0].suit == hole[1].suit
+        high, low = max(r1, r2), min(r1, r2)
+        pp = r1 == r2
+        if pp and high >= 9:
+            return AISuggestion("raise", 0.92, 12.5, "Premium pair; raise for value.", ["all-in", "call"])
+        if high >= 11 and low >= 9 and (suited or high == low):
+            return AISuggestion("raise", 0.85, 8.2, "Strong hand; build pot.", ["call", "fold"])
+        if high >= 10 and suited:
+            return AISuggestion("call", 0.72, 3.1, "Playable suited; see flop.", ["raise", "fold"])
+        if position in ("btn", "co", "hj") and high >= 8:
+            return AISuggestion("call", 0.58, 1.2, "Positional play.", ["fold", "raise"])
+        if stakes_tier >= 7 and high < 8 and not suited:
+            return AISuggestion("fold", 0.88, -0.5, "Weak hand at high stakes.", ["call"])
+        return AISuggestion("fold", 0.65, -0.3, "Marginal; fold in early position.", ["call"])
+
+    def suggest_postflop(self, hole: Sequence[Card], board: Sequence[Card], pot_frac: float) -> AISuggestion:
+        all_cards = list(hole) + list(board)
+        if len(all_cards) < 5:
+            return AISuggestion("check", 0.5, 0.0, "Insufficient board.", [])
+        ht, kick = evaluate_hand(all_cards)
+        if ht >= 7:
+            return AISuggestion("bet", 0.9, 15.0, "Strong made hand; value bet.", ["check", "raise"])
+        if ht >= 5 and pot_frac < 0.4:
+            return AISuggestion("bet", 0.75, 6.0, "Good hand; build pot.", ["check"])
+        if ht >= 3:
+            return AISuggestion("check", 0.6, 1.0, "Medium strength; pot control.", ["bet", "fold"])
+        return AISuggestion("check", 0.55, -0.2, "Weak; check or fold.", ["bet", "fold"])
+
+    def quality_band(self, suggestion: AISuggestion, actual_action: str) -> int:
+        match = 1 if suggestion.action.lower() == actual_action.lower() else 0
+        c = suggestion.confidence
+        band = min(10, int(c * 10)) if match else max(0, int((1 - c) * 5))
+        return band
+
+
+# -----------------------------------------------------------------------------
+# Session and hand history (local storage)
+# -----------------------------------------------------------------------------
+
+@dataclass
+class HandRecord:
+    hand_id: str
+    hole: List[str]
+    board: List[str]
+    action_taken: str
+    ai_suggestion: str
+    quality_band: int
+    stakes_tier: int
+    timestamp: float
+
+
