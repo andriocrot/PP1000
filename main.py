@@ -1246,3 +1246,99 @@ def simulate_n_hand_ev(hole: List[Card], n_opponents: int, n_trials: int) -> flo
         our_rank = ranks[0]
         n_winners = sum(1 for r in ranks if r == 0)
         if our_rank == 0 and n_winners > 1:
+            wins += 0.5
+        elif our_rank == 0:
+            wins += 1
+    return wins / n_trials
+
+
+def simulate_hand_vs_range(hole: List[Card], range_keys: List[str], board: List[Card], trials: int) -> float:
+    """Equity vs a range (hand keys like AA, AKs). Board can be empty for preflop."""
+    deck = make_deck()
+    used = set(c.to_index() for c in hole) | set(c.to_index() for c in board)
+    range_cards = _range_keys_to_combos(range_keys)
+    if not range_cards:
+        return 0.5
+    wins = 0
+    for _ in range(trials):
+        rest = [c for c in deck if c.to_index() not in used]
+        random.shuffle(rest)
+        opp = random.choice(range_cards)
+        opp_idx = set(c.to_index() for c in opp)
+        if opp_idx & used:
+            continue
+        need_board = 5 - len(board)
+        board_full = list(board) + [c for c in rest if c.to_index() not in opp_idx][:need_board]
+        our_best = _best_five(list(hole) + board_full)
+        opp_best = _best_five(list(opp) + board_full)
+        cmp = compare_hands(our_best, opp_best)
+        if cmp > 0:
+            wins += 1
+        elif cmp == 0:
+            wins += 0.5
+    return wins / trials
+
+
+def _range_keys_to_combos(keys: List[str]) -> List[List[Card]]:
+    combos = []
+    deck = make_deck()
+    for key in keys:
+        try:
+            combos.append(_shorthand_to_cards(key))
+        except Exception:
+            pass
+    return combos
+
+
+# -----------------------------------------------------------------------------
+# Config load/save helpers
+# -----------------------------------------------------------------------------
+
+def load_config() -> Dict[str, Any]:
+    path = _ensure_config_dir() / PP1000Constants.CONFIG_FILE
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_config_key(key: str, value: Any) -> None:
+    config = load_config()
+    config[key] = value
+    path = _ensure_config_dir() / PP1000Constants.CONFIG_FILE
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
+
+
+# -----------------------------------------------------------------------------
+# Hand history export (per-session)
+# -----------------------------------------------------------------------------
+
+def export_session_hands_csv(session_id: str, path: Optional[str] = None) -> None:
+    sessions = load_sessions()
+    for s in sessions:
+        if s.get("session_id") == session_id:
+            path = path or str(_ensure_config_dir() / ("session_" + session_id[:8] + ".csv"))
+            lines = ["hand_id,hole_1,hole_2,board,action,ai_suggestion,quality_band,timestamp"]
+            for h in s.get("hands", []):
+                hole = h.get("hole", ["", ""])
+                board = ",".join(h.get("board", []))
+                lines.append(",".join([
+                    h.get("hand_id", ""),
+                    hole[0] if len(hole) > 0 else "",
+                    hole[1] if len(hole) > 1 else "",
+                    board,
+                    h.get("action_taken", ""),
+                    h.get("ai_suggestion", ""),
+                    str(h.get("quality_band", 0)),
+                    str(h.get("timestamp", 0)),
+                ]))
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+            print("Exported to", path)
+            return
+    print("Session not found.")
+
