@@ -1438,3 +1438,99 @@ def daily_goal_hands() -> int:
 
 
 def daily_goal_progress() -> Tuple[int, int]:
+    sessions = load_sessions()
+    today_start = time.time() - (time.time() % 86400)
+    today_hands = 0
+    for s in sessions:
+        for h in s.get("hands", []):
+            if h.get("timestamp", 0) >= today_start:
+                today_hands += 1
+    return today_hands, daily_goal_hands()
+
+
+# -----------------------------------------------------------------------------
+# Card formatting for display
+# -----------------------------------------------------------------------------
+
+def format_card_short(c: Card) -> str:
+    return str(c)
+
+
+def format_hand_short(hole: Sequence[Card]) -> str:
+    return " ".join(format_card_short(c) for c in hole)
+
+
+def format_board_short(board: Sequence[Card]) -> str:
+    return " ".join(format_card_short(c) for c in board)
+
+
+# -----------------------------------------------------------------------------
+# Random hand generator (for drills)
+# -----------------------------------------------------------------------------
+
+def random_hand(rng: Optional[random.Random] = None) -> List[Card]:
+    deck = shuffle_deck(make_deck(), rng)
+    return [deck.pop(), deck.pop()]
+
+
+def random_board(deck: List[Card], rng: Optional[random.Random] = None) -> List[Card]:
+    r = rng or random
+    out = []
+    for _ in range(5):
+        out.append(deck.pop())
+    return out
+
+
+# -----------------------------------------------------------------------------
+# Equity vs random (preflop)
+# -----------------------------------------------------------------------------
+
+def preflop_equity_vs_random(hole: List[Card], n_trials: int = 500) -> float:
+    return _monte_carlo_equity(hole, [], n_trials)
+
+
+# -----------------------------------------------------------------------------
+# Session ID generation (PokerPro-compatible style)
+# -----------------------------------------------------------------------------
+
+def generate_session_id() -> str:
+    return secrets.token_hex(32)
+
+
+def session_id_to_bytes(session_id: str) -> bytes:
+    h = session_id.replace("0x", "").zfill(64)[-64:]
+    return bytes.fromhex(h)
+
+
+# -----------------------------------------------------------------------------
+# Feedback hash for PokerPro anchor
+# -----------------------------------------------------------------------------
+
+def compute_feedback_hash(hand_id: str, quality_band: int, ai_suggestion: str) -> str:
+    return feedback_hash_for_contract(hand_id, quality_band, ai_suggestion)
+
+
+def compute_hand_hash(hole: List[str], board: List[str], session_salt: str) -> str:
+    return hand_hash_for_contract(hole, board, session_salt)
+
+
+# -----------------------------------------------------------------------------
+# Validation: duplicate cards
+# -----------------------------------------------------------------------------
+
+def has_duplicate_cards(cards: Sequence[Card]) -> bool:
+    seen = set()
+    for c in cards:
+        idx = c.to_index()
+        if idx in seen:
+            return True
+        seen.add(idx)
+    return False
+
+
+# -----------------------------------------------------------------------------
+# Best hand from 7 cards (wrapper)
+# -----------------------------------------------------------------------------
+
+def best_hand_from_seven(cards: List[Card]) -> Tuple[List[Card], int, List[int]]:
+    if len(cards) != 7:
