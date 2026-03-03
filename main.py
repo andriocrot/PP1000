@@ -670,3 +670,99 @@ def _drill_postflop(engine: AITrainingEngine) -> None:
     sug = engine.suggest_postflop(hole, board, 0.35)
     print("Hole:", hole[0], hole[1], "| Board:", " ".join(str(c) for c in board))
     ans = input("Your action (check/bet/fold): ").strip().lower()
+    if ans and ans[0] == sug.action[0]:
+        print("Correct. AI:", sug.action, sug.reasoning[:50])
+    else:
+        print("AI:", sug.action, sug.reasoning)
+
+
+def _drill_range_quiz(engine: AITrainingEngine) -> None:
+    hands_raise = ["AA", "KK", "QQ", "AKs", "AQs", "JJ", "TT", "AK"]
+    hands_fold = ["72o", "83o", "92o", "T2o", "J3o"]
+    print("Is this a raise or fold from BTN? (Enter r/f)")
+    deck = make_deck()
+    random.shuffle(deck)
+    for _ in range(3):
+        hole = [deck.pop(), deck.pop()]
+        sug = engine.suggest_preflop(hole, "btn", 5)
+        a = input(f"  {hole[0]} {hole[1]}: ").strip().lower()
+        if a == "r" and sug.action == "raise":
+            print("    Correct.")
+        elif a == "f" and sug.action == "fold":
+            print("    Correct.")
+        else:
+            print("    AI:", sug.action)
+
+
+def _drill_equity_quiz(engine: AITrainingEngine) -> None:
+    print("Which hand has higher equity vs random? 1 or 2?")
+    deck = shuffle_deck(make_deck())
+    h1 = [deck.pop(), deck.pop()]
+    h2 = [deck.pop(), deck.pop()]
+    e1 = _monte_carlo_equity(h1, [], 200)
+    e2 = _monte_carlo_equity(h2, [], 200)
+    print("  Hand 1:", h1[0], h1[1], "  Hand 2:", h2[0], h2[1])
+    ans = input("  Answer (1/2): ").strip()
+    win1 = e1 > e2
+    if (ans == "1" and win1) or (ans == "2" and not win1):
+        print("  Correct.")
+    else:
+        print("  Hand 1 equity:", round(e1, 2), "Hand 2:", round(e2, 2))
+
+
+def _monte_carlo_equity(hole: List[Card], board: List[Card], trials: int) -> float:
+    wins = 0
+    used = set(c.to_index() for c in hole) | set(c.to_index() for c in board)
+    deck = make_deck()
+    for _ in range(trials):
+        rest = [c for c in deck if c.to_index() not in used]
+        random.shuffle(rest)
+        need = 5 - len(board)
+        opp_hole = [rest.pop(), rest.pop()]
+        board_complete = list(board) + rest[:need]
+        our_best = _best_five(list(hole) + board_complete)
+        opp_best = _best_five(opp_hole + board_complete)
+        if compare_hands(our_best, opp_best) > 0:
+            wins += 1
+        elif compare_hands(our_best, opp_best) == 0:
+            wins += 0.5
+    return 100.0 * wins / trials
+
+
+def _best_five(cards: List[Card]) -> List[Card]:
+    best = None
+    for combo in combinations(cards, 5):
+        c = list(combo)
+        if best is None or compare_hands(c, best) > 0:
+            best = c
+    return best or cards[:5]
+
+
+# -----------------------------------------------------------------------------
+# Range matrix and equity (preflop)
+# -----------------------------------------------------------------------------
+
+def range_matrix_raise_btn() -> Dict[str, float]:
+    """Approximate raise % from BTN; keys like 'AA', 'AKs', '72o'."""
+    out = {}
+    for r1 in range(13):
+        for r2 in range(13):
+            if r1 < r2:
+                r1, r2 = r2, r1
+            ra = PP1000Constants.RANK_NAMES[r1]
+            rb = PP1000Constants.RANK_NAMES[r2]
+            suited = "s" if r1 != r2 else ""
+            key = ra + rb + suited
+            if r1 == r2:
+                pct = 100.0 if r1 >= 8 else (60.0 + r1 * 4)
+            elif r1 == 12 and r2 >= 10:
+                pct = 95.0
+            elif r1 >= 10 and r2 >= 9:
+                pct = 70.0 + (r1 + r2) * 2
+            elif r1 >= 8 and r2 >= 6:
+                pct = 40.0 + r1 * 3
+            else:
+                pct = max(0, 20.0 + r1 * 2 - r2)
+            out[key] = min(100.0, max(0.0, pct))
+    return out
+
