@@ -958,3 +958,99 @@ def anchor_hand_to_chain(session_id: str, hand_hash_hex: str) -> bool:
         payload = _encode_record_hand(session_bytes, hand_bytes)
         if not payload:
             return False
+        selector = _keccak256(POKERPRO_ABI_RECORD_HAND.encode())[:4]
+        data = selector.hex() + payload[2:] if isinstance(selector, bytes) else ""
+        tx = {"to": Web3.to_checksum_address(addr), "data": data}
+        w3.eth.send_transaction(tx)
+        return True
+    except Exception:
+        return False
+
+
+def _encode_record_hand(session_bytes: bytes, hand_bytes: bytes) -> Optional[str]:
+    try:
+        from eth_abi import encode
+        return "0x" + encode(["bytes32", "bytes32"], [session_bytes, hand_bytes]).hex()
+    except Exception:
+        return None
+
+
+# -----------------------------------------------------------------------------
+# Table simulation: deal and run-out
+# -----------------------------------------------------------------------------
+
+def deal_hand(deck: List[Card], n_players: int) -> Tuple[List[Card], List[List[Card]], List[Card]]:
+    """Returns (board, list of hole cards per player, remaining deck)."""
+    hole_cards = []
+    for _ in range(n_players):
+        hole_cards.append([deck.pop(), deck.pop()])
+    flop = [deck.pop(), deck.pop(), deck.pop()]
+    turn = deck.pop()
+    river = deck.pop()
+    board = flop + [turn, river]
+    return board, hole_cards, deck
+
+
+def run_out_showdown(hole_sets: List[List[Card]], board: List[Card]) -> List[int]:
+    """Returns list of hand ranks (0 = best) for each player."""
+    evaluations = []
+    for hole in hole_sets:
+        full = list(hole) + list(board)
+        if len(full) < 5:
+            evaluations.append((0, [0]))
+            continue
+        best_combo = None
+        for combo in combinations(full, 5):
+            c = list(combo)
+            if best_combo is None or compare_hands(c, best_combo) > 0:
+                best_combo = c
+        ev = evaluate_hand(best_combo) if best_combo else (0, [0])
+        evaluations.append(ev)
+    order = sorted(range(len(evaluations)), key=lambda i: (-evaluations[i][0], [-x for x in evaluations[i][1]]))
+    rank = [0] * len(order)
+    for r, i in enumerate(order):
+        rank[i] = r
+    return rank
+
+
+# -----------------------------------------------------------------------------
+# Additional AI: turn/river and bluff detection
+# -----------------------------------------------------------------------------
+
+class AITurnRiverEngine(AITrainingEngine):
+    def suggest_turn(self, hole: Sequence[Card], board: Sequence[Card], pot_frac: float, opp_bet: bool) -> AISuggestion:
+        if len(board) < 4:
+            return AISuggestion("check", 0.5, 0.0, "Need turn card.", [])
+        return self.suggest_postflop(hole, board, pot_frac + (0.1 if opp_bet else 0))
+
+    def suggest_river(self, hole: Sequence[Card], board: Sequence[Card], pot_size: float, to_call: float) -> AISuggestion:
+        if len(board) < 5:
+            return AISuggestion("check", 0.5, 0.0, "Need river.", [])
+        be = break_even_equity(to_call, pot_size - to_call)
+        eq = _monte_carlo_equity(list(hole), list(board), 300)
+        eq_pct = eq / 100.0
+        if eq_pct >= be + 0.08:
+            return AISuggestion("call", 0.8, eq_pct - be, "Equity above break-even; call.", ["raise", "fold"])
+        if eq_pct <= be - 0.08:
+            return AISuggestion("fold", 0.75, be - eq_pct, "Equity below break-even; fold.", ["call"])
+        return AISuggestion("marginal", 0.5, 0.0, "Close spot; consider pot odds.", ["call", "fold"])
+
+
+def bluff_frequency_suggestion(position: str, board_texture: str) -> float:
+    """Suggested bluff frequency (0–1) by position and board."""
+    pos_freq = {"btn": 0.45, "co": 0.35, "hj": 0.28, "utg": 0.2, "sb": 0.4, "bb": 0.25}
+    tex_freq = {"dry": 0.35, "wet": 0.25, "paired": 0.2, "monotone": 0.15}
+    p = pos_freq.get(position.lower(), 0.3)
+    t = tex_freq.get(board_texture.lower(), 0.3)
+    return (p + t) / 2
+
+
+# -----------------------------------------------------------------------------
+# Help and training tips
+# -----------------------------------------------------------------------------
+
+HELP_TOPICS = {
+    "preflop": "Preflop: Play tighter from early position (UTG, HJ). Raise premium pairs and strong broadway. Call more from BTN/CO with suited connectors.",
+    "postflop": "Postflop: Value bet when you have a strong hand. Check when marginal. Consider pot odds before calling.",
+    "position": "Position: Later position = more hands to play. BTN is most profitable. Play fewer hands from SB/BB without premium.",
+    "equity": "Equity: Your share of the pot when all-in. Use break-even equity (call / (pot + call)) to decide calls.",
