@@ -1630,3 +1630,86 @@ def run_settings() -> None:
     config = {}
     if config_path.exists():
         try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+        except Exception:
+            pass
+    print("Current RPC:", config.get("rpc", PP1000Constants.DEFAULT_RPC))
+    print("PokerPro contract:", config.get("contract", PP1000Constants.POKERPRO_DEPLOYED_AT))
+    rpc = input("New RPC (Enter to keep): ").strip()
+    if rpc:
+        config["rpc"] = rpc
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
+    print("Settings saved.")
+
+
+def main() -> int:
+    print_banner()
+    engine = AITrainingEngine(seed=None)
+    while True:
+        choice = menu_main()
+        if choice == "0":
+            break
+        if choice == "1":
+            run_new_session(engine)
+        elif choice == "2":
+            run_hand_evaluator()
+        elif choice == "3":
+            run_ai_preflop(engine)
+        elif choice == "4":
+            run_ai_postflop(engine)
+        elif choice == "5":
+            run_view_history()
+        elif choice == "6":
+            run_stats()
+        elif choice == "7":
+            run_drills(engine)
+        elif choice == "8":
+            run_settings()
+        elif choice == "9":
+            export_sessions_csv()
+        elif choice.lower() == "a":
+            show_help()
+        elif choice.lower() == "b":
+            run_quiz_bank(engine)
+        else:
+            print("Unknown option.")
+    print("Goodbye.")
+    return 0
+
+
+def get_app_version() -> str:
+    return PP1000Constants.VERSION
+
+
+def get_app_name() -> str:
+    return PP1000Constants.APP_NAME
+
+
+def default_rpc_url() -> str:
+    return PP1000Constants.DEFAULT_RPC
+
+
+def max_hands_per_session_limit() -> int:
+    return PP1000Constants.MAX_HANDS_PER_SESSION
+
+
+def training_levels_count() -> int:
+    return PP1000Constants.TRAINING_LEVELS
+
+
+def hand_rank_names_list() -> Tuple[str, ...]:
+    return PP1000Constants.HAND_RANK_NAMES
+
+
+def stakes_tiers_count() -> int:
+    return PP1000Constants.STAKES_TIERS
+
+
+def quality_bands_count() -> int:
+    return PP1000Constants.QUALITY_BANDS
+
+
+if __name__ == "__main__":
+    sys.exit(main())
