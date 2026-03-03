@@ -94,3 +94,99 @@ class Card:
         if len(s) < 2:
             raise ValueError(f"Invalid card: {s}")
         rchar = s[0]
+        schar = s[1]
+        rank_map = {c: Rank(i) for i, c in enumerate(PP1000Constants.RANK_NAMES)}
+        suit_map = {c: Suit(i) for i, c in enumerate(PP1000Constants.SUIT_NAMES)}
+        if rchar == "1" and len(s) >= 3 and s[1:3] == "0":
+            rchar, schar = "T", s[2]
+        rank = rank_map.get(rchar)
+        suit = suit_map.get(schar)
+        if rank is None or suit is None:
+            raise ValueError(f"Invalid card: {s}")
+        return cls(rank=rank, suit=suit)
+
+    def to_index(self) -> int:
+        return int(self.rank) * 4 + int(self.suit)
+
+
+def make_deck() -> List[Card]:
+    return [Card(Rank(r), Suit(s)) for r in range(13) for s in range(4)]
+
+
+def shuffle_deck(deck: List[Card], rng: Optional[random.Random] = None) -> List[Card]:
+    out = list(deck)
+    (rng or random).shuffle(out)
+    return out
+
+
+# -----------------------------------------------------------------------------
+# Hand evaluation (simplified but deterministic)
+# -----------------------------------------------------------------------------
+
+def _rank_counts(cards: Sequence[Card]) -> List[Tuple[int, int]]:
+    counts: Dict[int, int] = {}
+    for c in cards:
+        r = int(c.rank)
+        counts[r] = counts.get(r, 0) + 1
+    pairs = [(count, rank) for rank, count in counts.items()]
+    pairs.sort(key=lambda x: (-x[0], -x[1]))
+    return pairs
+
+
+def _is_straight(ranks: List[int]) -> Optional[int]:
+    s = sorted(set(ranks), reverse=True)
+    if len(s) < 5:
+        return None
+    for i in range(len(s) - 4):
+        run = s[i : i + 5]
+        if run[0] - run[-1] == 4:
+            return run[0]
+    if 12 in s and 3 in s and 2 in s and 1 in s and 0 in s:
+        return 3
+    return None
+
+
+def _is_flush(cards: Sequence[Card]) -> Optional[List[int]]:
+    by_suit: Dict[int, List[int]] = {}
+    for c in cards:
+        by_suit.setdefault(int(c.suit), []).append(int(c.rank))
+    for suit, ranks in by_suit.items():
+        if len(ranks) >= 5:
+            return sorted(ranks, reverse=True)[:5]
+    return None
+
+
+def evaluate_hand(cards: Sequence[Card]) -> Tuple[int, List[int]]:
+    if len(cards) < 5:
+        raise ValueError("Need at least 5 cards")
+    ranks = [int(c.rank) for c in cards]
+    suits = [int(c.suit) for c in cards]
+    rank_cnt = _rank_counts(cards)
+    flush_ranks = _is_flush(cards)
+    straight_high = _is_straight(ranks)
+    is_flush = flush_ranks is not None
+    is_straight = straight_high is not None
+    if is_flush and is_straight:
+        sr = sorted(set(ranks), reverse=True)
+        for i in range(len(sr) - 4):
+            run = sr[i : i + 5]
+            if run[0] - run[-1] == 4 or (run == [12, 11, 10, 9, 8] or (12 in run and 3 in run and 2 in run and 1 in run and 0 in run)):
+                high = run[0] if run[0] - run[-1] == 4 else 3
+                return (9, [high])
+        if 12 in ranks and 11 in ranks and 10 in ranks and 9 in ranks and 8 in ranks:
+            return (10, [12])
+    if rank_cnt[0][0] == 4:
+        kickers = sorted([r for r in ranks if r != rank_cnt[0][1]], reverse=True)[:1]
+        return (8, [rank_cnt[0][1]] + kickers)
+    if rank_cnt[0][0] >= 3 and len(rank_cnt) >= 2 and rank_cnt[1][0] >= 2:
+        return (7, [rank_cnt[0][1], rank_cnt[1][1]])
+    if is_flush:
+        return (6, flush_ranks[:5])
+    if is_straight:
+        return (5, [straight_high])
+    if rank_cnt[0][0] == 3:
+        kickers = sorted([r for r in ranks if r != rank_cnt[0][1]], reverse=True)[:2]
+        return (4, [rank_cnt[0][1]] + kickers)
+    if rank_cnt[0][0] == 2 and len(rank_cnt) >= 2 and rank_cnt[1][0] == 2:
+        k = [rank_cnt[0][1], rank_cnt[1][1]]
+        kickers = sorted([r for r in ranks if r not in k], reverse=True)[:1]
