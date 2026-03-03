@@ -862,3 +862,99 @@ def export_sessions_csv(path: Optional[str] = None) -> None:
         lines.append(",".join([
             s.get("session_id", ""),
             str(s.get("stakes_tier", 0)),
+            str(s.get("opened_at", 0)),
+            str(s.get("closed_at") or ""),
+            str(len(hands)),
+            str(level),
+        ]))
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    print("Exported to", path)
+
+
+def import_sessions_from_json(path: str) -> None:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    existing = load_sessions()
+    if isinstance(data, list):
+        existing.extend(data)
+    else:
+        existing.append(data)
+    save_sessions(existing)
+    print("Imported from", path)
+
+
+# -----------------------------------------------------------------------------
+# PokerPro contract integration (optional web3)
+# -----------------------------------------------------------------------------
+
+POKERPRO_ABI_OPEN_SESSION = "openSession(uint8)"
+POKERPRO_ABI_CLOSE_SESSION = "closeSession(bytes32)"
+POKERPRO_ABI_RECORD_HAND = "recordHand(bytes32,bytes32)"
+POKERPRO_ABI_ANCHOR_FEEDBACK = "anchorAIFeedback(bytes32,bytes32,uint8)"
+POKERPRO_ABI_SET_STAKES = "setStakesTier(bytes32,uint8)"
+
+
+def _get_contract_address() -> str:
+    config_path = _ensure_config_dir() / PP1000Constants.CONFIG_FILE
+    if config_path.exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                c = json.load(f)
+                return c.get("contract") or PP1000Constants.POKERPRO_DEPLOYED_AT
+        except Exception:
+            pass
+    return PP1000Constants.POKERPRO_DEPLOYED_AT
+
+
+def _encode_open_session(stakes_tier: int) -> Optional[str]:
+    try:
+        from eth_abi import encode
+        return "0x" + encode(["uint8"], [stakes_tier]).hex()
+    except Exception:
+        return None
+
+
+def _encode_close_session(session_id_bytes: bytes) -> Optional[str]:
+    try:
+        from eth_abi import encode
+        return "0x" + encode(["bytes32"], [session_id_bytes]).hex()
+    except Exception:
+        return None
+
+
+def anchor_session_to_chain(session_id: str, stakes_tier: int, trainee_address: str) -> bool:
+    """Optional: send openSession to PokerPro. Returns True if simulated or sent."""
+    addr = _get_contract_address()
+    payload = _encode_open_session(stakes_tier)
+    if not payload:
+        return False
+    try:
+        from web3 import Web3
+        rpc = os.environ.get("PP1000_RPC", PP1000Constants.DEFAULT_RPC)
+        w3 = Web3(Web3.HTTPProvider(rpc))
+        if not w3.is_connected():
+            return False
+        selector = _keccak256(POKERPRO_ABI_OPEN_SESSION.encode())[:4]
+        data = selector.hex() + payload[2:] if isinstance(selector, bytes) else ""
+        tx = {"to": Web3.to_checksum_address(addr), "data": data, "from": trainee_address}
+        w3.eth.send_transaction(tx)
+        return True
+    except Exception:
+        return False
+
+
+def anchor_hand_to_chain(session_id: str, hand_hash_hex: str) -> bool:
+    """Optional: recordHand on PokerPro."""
+    try:
+        from web3 import Web3
+        addr = _get_contract_address()
+        rpc = os.environ.get("PP1000_RPC", PP1000Constants.DEFAULT_RPC)
+        w3 = Web3(Web3.HTTPProvider(rpc))
+        if not w3.is_connected():
+            return False
+        session_bytes = bytes.fromhex(session_id.replace("0x", "").zfill(64)[-64:])
+        hand_bytes = bytes.fromhex(hand_hash_hex.replace("0x", "").zfill(64)[-64:])
+        payload = _encode_record_hand(session_bytes, hand_bytes)
+        if not payload:
+            return False
