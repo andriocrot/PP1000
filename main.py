@@ -382,3 +382,99 @@ def print_banner() -> None:
     print("\n" + "=" * 60)
     print("  PP1000 — AI Poker Training. AI that makes you pro.")
     print("  Version:", PP1000Constants.VERSION)
+    print("=" * 60 + "\n")
+
+
+def menu_main() -> str:
+    print("1. New training session")
+    print("2. Hand evaluator")
+    print("3. AI suggestion (preflop)")
+    print("4. AI suggestion (postflop)")
+    print("5. View session history")
+    print("6. Stats and progress")
+    print("7. Drills")
+    print("8. Settings")
+    print("9. Export sessions (CSV)")
+    print("a. Help")
+    print("b. Preflop quiz bank")
+    print("0. Exit")
+    return input("Choice: ").strip()
+
+
+def run_hand_evaluator() -> None:
+    print("Enter 5–7 cards (e.g. As Kh Qd Jc Th). One line:")
+    line = input().strip()
+    cards = []
+    for part in line.split():
+        try:
+            cards.append(Card.from_string(part))
+        except ValueError as e:
+            print("Error:", e)
+            return
+    if len(cards) < 5:
+        print("Need at least 5 cards.")
+        return
+    ht, kickers = evaluate_hand(cards)
+    print("Hand:", hand_rank_name(ht), "| Kickers:", kickers)
+
+
+def run_ai_preflop(engine: AITrainingEngine) -> None:
+    print("Enter 2 hole cards (e.g. As Kh):")
+    line = input().strip().split()
+    if len(line) < 2:
+        print("Need 2 cards.")
+        return
+    try:
+        hole = [Card.from_string(line[0]), Card.from_string(line[1])]
+    except ValueError as e:
+        print("Error:", e)
+        return
+    pos = input("Position (utg, hj, co, btn, sb, bb): ").strip() or "btn"
+    tier = 5
+    try:
+        t = input("Stakes tier 0–10 [5]: ").strip()
+        if t:
+            tier = max(0, min(10, int(t)))
+    except ValueError:
+        pass
+    s = engine.suggest_preflop(hole, pos, tier)
+    print("AI:", s.action, "| Confidence:", s.confidence, "|", s.reasoning)
+
+
+def run_ai_postflop(engine: AITrainingEngine) -> None:
+    print("Enter hole cards (e.g. As Kh):")
+    hole_parts = input().strip().split()[:2]
+    if len(hole_parts) < 2:
+        print("Need 2 hole cards.")
+        return
+    print("Enter board (e.g. Qd Jc Th 2s):")
+    board_parts = input().strip().split()[:5]
+    try:
+        hole = [Card.from_string(hole_parts[0]), Card.from_string(hole_parts[1])]
+        board = [Card.from_string(p) for p in board_parts]
+    except ValueError as e:
+        print("Error:", e)
+        return
+    pot_frac = 0.3
+    try:
+        p = input("Pot fraction 0–1 [0.3]: ").strip()
+        if p:
+            pot_frac = max(0.0, min(1.0, float(p)))
+    except ValueError:
+        pass
+    s = engine.suggest_postflop(hole, board, pot_frac)
+    print("AI:", s.action, "| Confidence:", s.confidence, "|", s.reasoning)
+
+
+def run_new_session(engine: AITrainingEngine) -> None:
+    session_id = secrets.token_hex(16)
+    tier = 5
+    try:
+        t = input("Stakes tier 0–10 [5]: ").strip()
+        if t:
+            tier = max(0, min(10, int(t)))
+    except ValueError:
+        pass
+    sessions = load_sessions()
+    sessions.append({
+        "session_id": session_id,
