@@ -1150,3 +1150,99 @@ def run_quiz_bank(engine: AITrainingEngine) -> None:
 def hand_strength_tier(hole: Sequence[Card], board: Sequence[Card]) -> int:
     """0–9; 9 = nuts, 0 = trash."""
     if len(board) < 3:
+        r1, r2 = int(hole[0].rank), int(hole[1].rank)
+        pair = r1 == r2
+        high = max(r1, r2)
+        if pair and high >= 11:
+            return 9
+        if pair and high >= 8:
+            return 7
+        if high >= 11 and min(r1, r2) >= 9:
+            return 6
+        if high >= 9:
+            return 4
+        return 2
+    full = list(hole) + list(board)
+    ht, _ = evaluate_hand(full)
+    return min(9, ht + 1)
+
+
+# -----------------------------------------------------------------------------
+# Session summary report
+# -----------------------------------------------------------------------------
+
+def session_summary_report(session_id: str) -> Optional[str]:
+    sessions = load_sessions()
+    for s in sessions:
+        if s.get("session_id") == session_id:
+            hands = s.get("hands", [])
+            match = sum(1 for h in hands if h.get("action_taken") == h.get("ai_suggestion"))
+            level = compute_level(len(hands), match)
+            lines = [
+                "Session: " + session_id[:20] + "...",
+                "Stakes tier: " + str(s.get("stakes_tier", 0)),
+                "Hands: " + str(len(hands)),
+                "AI agreement: " + str(match) + " / " + str(len(hands)),
+                "Level: " + level_title(level),
+            ]
+            return "\n".join(lines)
+    return None
+
+
+# -----------------------------------------------------------------------------
+# Validate card input
+# -----------------------------------------------------------------------------
+
+def parse_cards_line(line: str, min_cards: int = 0, max_cards: int = 7) -> List[Card]:
+    cards = []
+    for part in line.replace(",", " ").split():
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            cards.append(Card.from_string(part))
+        except ValueError:
+            continue
+        if len(cards) >= max_cards:
+            break
+    if min_cards and len(cards) < min_cards:
+        raise ValueError("Need at least {} cards".format(min_cards))
+    return cards
+
+
+# -----------------------------------------------------------------------------
+# Batch hand evaluation (for analysis)
+# -----------------------------------------------------------------------------
+
+def batch_evaluate_hands(hand_list: List[List[Card]]) -> List[Tuple[int, List[int]]]:
+    return [evaluate_hand(h) for h in hand_list]
+
+
+def batch_compare_winner(hands: List[List[Card]]) -> int:
+    """Returns index of winning hand."""
+    evals = [evaluate_hand(h) for h in hands]
+    best_i = 0
+    for i in range(1, len(evals)):
+        if compare_hands(hands[i], hands[best_i]) > 0:
+            best_i = i
+    return best_i
+
+
+# -----------------------------------------------------------------------------
+# Extended simulation: full table run-out and EV
+# -----------------------------------------------------------------------------
+
+def simulate_n_hand_ev(hole: List[Card], n_opponents: int, n_trials: int) -> float:
+    """Win rate (0–1) vs n opponents with random hands and random board."""
+    wins = 0
+    deck = make_deck()
+    used = set(c.to_index() for c in hole)
+    for _ in range(n_trials):
+        rest = [c for c in deck if c.to_index() not in used]
+        random.shuffle(rest)
+        opp_holes = [[rest.pop(), rest.pop()] for _ in range(n_opponents)]
+        board = [rest.pop() for _ in range(5)]
+        ranks = run_out_showdown([hole] + opp_holes, board)
+        our_rank = ranks[0]
+        n_winners = sum(1 for r in ranks if r == 0)
+        if our_rank == 0 and n_winners > 1:
