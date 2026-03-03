@@ -1534,3 +1534,99 @@ def has_duplicate_cards(cards: Sequence[Card]) -> bool:
 
 def best_hand_from_seven(cards: List[Card]) -> Tuple[List[Card], int, List[int]]:
     if len(cards) != 7:
+        raise ValueError("Need exactly 7 cards")
+    best = _best_five(cards)
+    ht, kick = evaluate_hand(best)
+    return best, ht, kick
+
+
+# -----------------------------------------------------------------------------
+# Training level requirements (for UI)
+# -----------------------------------------------------------------------------
+
+def level_requirement_hands(level: int) -> int:
+    return (level + 1) * 50
+
+
+def level_requirement_agreement_rate(level: int) -> float:
+    return 0.4 + level * 0.03
+
+
+# -----------------------------------------------------------------------------
+# Session filter by tier
+# -----------------------------------------------------------------------------
+
+def sessions_by_tier(tier: int) -> List[Dict[str, Any]]:
+    return [s for s in load_sessions() if s.get("stakes_tier") == tier]
+
+
+# -----------------------------------------------------------------------------
+# Session filter by date range
+# -----------------------------------------------------------------------------
+
+def sessions_in_range(ts_start: float, ts_end: float) -> List[Dict[str, Any]]:
+    return [
+        s for s in load_sessions()
+        if ts_start <= s.get("opened_at", 0) <= ts_end
+    ]
+
+
+# -----------------------------------------------------------------------------
+# Aggregate stats
+# -----------------------------------------------------------------------------
+
+def aggregate_ai_agreement_by_tier(sessions: List[Dict[str, Any]]) -> Dict[int, Tuple[int, int]]:
+    by_tier: Dict[int, List[bool]] = {}
+    for s in sessions:
+        t = s.get("stakes_tier", 0)
+        for h in s.get("hands", []):
+            match = h.get("action_taken", "").lower() == h.get("ai_suggestion", "").lower()
+            by_tier.setdefault(t, []).append(match)
+    out = {}
+    for t, matches in by_tier.items():
+        out[t] = (sum(matches), len(matches))
+    return out
+
+
+# -----------------------------------------------------------------------------
+# Main entry (repeated for clarity)
+# -----------------------------------------------------------------------------
+
+def cli_loop(engine: Optional[AITrainingEngine] = None) -> None:
+    if engine is None:
+        engine = AITrainingEngine()
+    while True:
+        choice = menu_main()
+        if choice == "0":
+            break
+        if choice == "1":
+            run_new_session(engine)
+        elif choice == "2":
+            run_hand_evaluator()
+        elif choice == "3":
+            run_ai_preflop(engine)
+        elif choice == "4":
+            run_ai_postflop(engine)
+        elif choice == "5":
+            run_view_history()
+        elif choice == "6":
+            run_stats()
+        elif choice == "7":
+            run_drills(engine)
+        elif choice == "8":
+            run_settings()
+        elif choice == "9":
+            export_sessions_csv()
+        elif choice.lower() == "a":
+            show_help()
+        elif choice.lower() == "b":
+            run_quiz_bank(engine)
+        else:
+            print("Unknown option.")
+
+
+def run_settings() -> None:
+    config_path = _ensure_config_dir() / PP1000Constants.CONFIG_FILE
+    config = {}
+    if config_path.exists():
+        try:
